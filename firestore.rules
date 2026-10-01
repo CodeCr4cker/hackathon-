@@ -1,0 +1,20 @@
+rules_version='2';
+service cloud.firestore { match /databases/{db}/documents {
+  function me(){return request.auth!=null}
+  function mail(){return request.auth.token.email.lower()}
+  function alertOf(a){return get(/databases/$(db)/documents/sosAlerts/$(a)).data}
+  function mayView(d){return d.userId==request.auth.uid || mail() in d.contactEmails}
+  match /users/{u}{ allow read,write: if me() && request.auth.uid==u;
+    match /trustedContacts/{c}{ allow read,write: if me() && request.auth.uid==u; } }
+  match /sosAlerts/{a}{
+    allow read: if me() && mayView(resource.data);
+    allow create: if me() && request.resource.data.userId==request.auth.uid
+      && request.resource.data.status in ['Triggered','Processing','Delivered'] && !('aiResponse' in request.resource.data);
+    // owner: status/media/aiStatus only. contacts: status only. aiResponse is written by the Cloud Function (admin SDK).
+    allow update: if me() && (
+      (resource.data.userId==request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','media','aiStatus','aiResponse','updatedAt']))
+      || (mail() in resource.data.contactEmails && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','updatedAt'])));
+    match /events/{e}{ allow read,create: if me() && mayView(alertOf(a)); allow update,delete: if false; } }
+  match /aiResponses/{r}{ allow read: if me() && resource.data.userId==request.auth.uid; allow create: if me() && request.resource.data.userId==request.auth.uid; allow update,delete: if false; }
+  match /{p=**}{ allow read,write: if false; }
+}}
